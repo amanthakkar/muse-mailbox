@@ -1,0 +1,12 @@
+# muse-mailbox/2 — TypeScript sketch (NOT DEPLOYED)
+
+# This file is the production-shaped mapping of the Python scratch harness.
+# Do not wrangler deploy. No account, no routes, no real tokens.
+
+name = "muse-mailbox-scratch"
+main = "src/index.ts"
+compatibility_date = "2026-09-15"
+
+# [[durable_objects]]
+# [[r2_buckets]]
+# Intentionally commented: production deploy is not authorized.
