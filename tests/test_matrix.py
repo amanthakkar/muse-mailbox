@@ -19,6 +19,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from muse_mailbox.canon import canonical_json_bytes  # noqa: E402
+from muse_mailbox.card import verify_card_fingerprints  # noqa: E402
 from muse_mailbox.client import MailboxClient  # noqa: E402
 from muse_mailbox.crypto import (  # noqa: E402
     PeerPublic,
@@ -466,6 +467,51 @@ def _wait_port(port: int, timeout: float = 8.0) -> None:
         except OSError:
             time.sleep(0.05)
     raise RuntimeError(f"server did not bind :{port}")
+
+
+class FileCustodyTests(unittest.TestCase):
+    def test_roundtrip_0600_and_hook_cannot_name_secrets(self) -> None:
+        import stat
+        import tempfile
+
+        from muse_mailbox.custody import (
+            client_from_home,
+            hook_script_is_safe,
+            init_home,
+            load_home,
+            read_last_seq,
+            write_last_seq,
+        )
+
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        store = Store(str(Path(td.name) / "mb.sqlite"))
+        self.addCleanup(store.close)
+        relay = Relay(store)
+        bundle, aman, gauri = _clients(store, relay)
+        home_path = Path(td.name) / "aman-home"
+        home = init_home(home_path, aman.identity, bundle["cards"]["aman"])
+        mode = stat.S_IMODE(home_path.stat().st_mode)
+        self.assertEqual(mode, 0o700)
+        for name in ("identity.json", "card.json", "state.json"):
+            self.assertEqual(stat.S_IMODE((home_path / name).stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE((home_path / "last_seq").stat().st_mode), 0o644)
+        loaded = load_home(home_path)
+        self.assertEqual(loaded.identity.participant, "aman")
+        self.assertEqual(loaded.identity.sign_pub_raw, aman.identity.sign_pub_raw)
+        verify_card_fingerprints(loaded.card)
+        write_last_seq(loaded, 7)
+        self.assertEqual(read_last_seq(home_path), 7)
+        safe = """seq=$(curl --fail --silent --max-time 10 "$URL/stats")
+last=$(cat "$HOME/last_seq")
+"""
+        self.assertTrue(hook_script_is_safe(safe))
+        self.assertFalse(hook_script_is_safe("cat identity.json"))
+        self.assertFalse(hook_script_is_safe("echo card.json"))
+        c = client_from_home(loaded, aman.transport)
+        c.send("from-disk")
+        gauri.drain()
+        self.assertEqual(gauri.state.dispatched[-1]["body"], "from-disk")
 
 
 if __name__ == "__main__":

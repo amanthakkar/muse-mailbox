@@ -85,6 +85,44 @@ class Identity:
         )
         return cls(participant, sign_priv, sign_pub, enc_priv, enc_pub)
 
+    def private_dict(self) -> dict:
+        """Raw 32-byte seeds. Caller must write mode 0600 and never log this."""
+        return {
+            "v": 2,
+            "participant": self.participant,
+            "sign_seed": b64encode(
+                self.sign_priv.private_bytes(
+                    encoding=serialization.Encoding.Raw,
+                    format=serialization.PrivateFormat.Raw,
+                    encryption_algorithm=serialization.NoEncryption(),
+                )
+            ),
+            "enc_seed": b64encode(
+                self.enc_priv.private_bytes(
+                    encoding=serialization.Encoding.Raw,
+                    format=serialization.PrivateFormat.Raw,
+                    encryption_algorithm=serialization.NoEncryption(),
+                )
+            ),
+        }
+
+    @classmethod
+    def from_private_dict(cls, data: dict) -> "Identity":
+        participant = data["participant"]
+        if participant not in PARTICIPANTS:
+            raise ValueError(f"unknown participant {participant!r}")
+        sign_priv = Ed25519PrivateKey.from_private_bytes(b64decode(data["sign_seed"]))
+        enc_priv = X25519PrivateKey.from_private_bytes(b64decode(data["enc_seed"]))
+        sign_pub = sign_priv.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        enc_pub = enc_priv.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        return cls(participant, sign_priv, sign_pub, enc_priv, enc_pub)
+
     @property
     def sign_kid(self) -> str:
         return kid_of(self.sign_pub_raw)

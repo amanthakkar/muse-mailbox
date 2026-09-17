@@ -1,23 +1,27 @@
-# Connection-card provisioning + worker key read path
+# Connection-card provisioning + file-based key custody
 
 Design only. No real keys, tokens, or mailbox ids are minted by this document.
+
+Updated 2026-09-16 after Aman/Anton: Hatch Secure Vault is website logins and API
+credential *cards*, consumed through their own flows. **There is no worker-readable
+named-secret KV.** Provisioning is therefore files, not vault items.
 
 ## Principle
 
 Three ceremonies, three places, no shared infrastructure:
 
 1. **Relay operator** mints `mailbox_id` + four directional tokens. Never sees keypairs.
-2. **Each Muse** generates its own Ed25519 + X25519 on-device. Private keys never leave that runtime’s secret store. Never go in the card.
-3. **Humans in person** swap public keys + fingerprints, then each human pastes **their own** card into **their own** Muse. Aman does not hand Gauri’s Muse anything through his Muse, and vice versa.
+2. **Each Muse** generates its own Ed25519 + X25519 on-device. Private keys never leave that runtime. Never go in the card.
+3. **Humans in person** swap public keys + fingerprints, then each human writes **their own** card into **their own** Muse home directory.
 
 ```
         in person (fingerprints aloud)
    Aman -------------------------------+----------------> Gauri
      |                                 |                   |
-     | own card into Aman's vault      |                   | own card into Gauri's vault
+     | own files on Aman's VM          |                   | own files on Gauri's runtime
      v                                 v                   v
  Aman Muse                         Relay                Gauri Muse
-  (private keys)              (tokens + ciphertext)     (private keys)
+  (0600 identity+card)         (tokens + ciphertext)    (0600 identity+card)
 ```
 
 ## What is on a card (PROTOCOL §7)
@@ -38,44 +42,72 @@ Display: 16 groups of 4 uppercase hex. Giver reads the **first 8 groups** aloud.
 
 Then a non-destructive liveness probe: `GET /messages?since=999999999&limit=1` with the fetch token, expect empty 200. Never send a test message.
 
-## Where private keys live (the load-bearing read path)
+## File layout (the load-bearing read path)
 
-Hook scripts **cannot** hold secrets. The woken worker **must**.
+Hook scripts **cannot** hold secrets. The woken worker **must**. Hatch cannot hand the worker a vault KV, so:
 
-### Aman Muse (Hatch)
+`$MUSE_MAILBOX_HOME/` (directory mode `0700`), default `~/.muse-mailbox/`:
 
-Proposed vault layout (names, not an API claim — Hatch’s Secure Vault should be verified at build time):
+| File | Mode | Who opens it | Contents |
+|---|---|---|---|
+| `identity.json` | `0600` | woken worker only | Ed25519 seed + X25519 seed, raw 32-byte, base64 |
+| `card.json` | `0600` | woken worker only | this Muse’s connection card (own tokens + both public keys) |
+| `state.json` | `0600` | woken worker only | `fetch_cursor`, `process_cursor`, `next_sender_seq` |
+| `last_seq` | `0644` | **hook and worker** | decimal `highest_seq` last observed. Not a secret. |
 
-| Secret name | Contents | Readable by |
-|---|---|---|
-| `muse-mailbox/identity` | Ed25519 seed + X25519 seed, 0600 equivalent | woken worker only |
-| `muse-mailbox/card-gauri` | Aman’s connection card JSON (public keys + Aman’s tokens) | woken worker only |
-| `muse-mailbox/cursors` | `fetch_cursor`, `process_cursor`, `last_seen_highest_seq` | woken worker (durable state; not a key) |
+Scratch helpers: `src/muse_mailbox/custody.py` (`init_home`, `load_home`, `hook_script_is_safe`).
 
-Hook: a local file `~/muse-mailbox/last_seq` **or** a comparison against the last observed public counter stored without credentials. Prefer: hook curls `/stats`, compares to a world-readable file the worker updates after drain. The file is not a secret.
+### Secretless hook (never names the 0600 files)
 
-If Hatch workers read named vault items the way other Hatch skills do, this is the path. **Need from Aman:** confirm a woken Hatch worker can `vault.read` those two secrets. If not, we need another Hatch-native secret surface before go-live.
+```sh
+# hook: poll_interval_secs=5. No tokens. No identity.json. No card.json.
+seq=$(curl --fail --silent --show-error --max-time 10 \
+  "$RELAY_URL/v1/mailboxes/$MAILBOX_ID/stats" | python3 -c 'import sys,json;print(json.load(sys.stdin)["highest_seq"])')
+last=$(cat "$MUSE_MAILBOX_HOME/last_seq" 2>/dev/null || echo 0)
+if [ "$seq" -gt "$last" ]; then
+  wake "mailbox" "$seq"     # runtime-specific wake call
+else
+  silent "no-change" "$seq"
+fi
+```
+
+`$RELAY_URL` and `$MAILBOX_ID` in the hook are **not secrets** (mailbox id is unguessable but the oracle is public by design). They can live in the hook source or in `last_seq`’s sibling only if that sibling is also 0644 and contains no tokens. Prefer baking the public URL+id into the hook; keep tokens exclusively in `card.json`.
+
+`hook_script_is_safe()` rejects any hook source that mentions `identity.json`, `card.json`, or `state.json`.
+
+### Woken worker
+
+1. `load_home($MUSE_MAILBOX_HOME)` — reads 0600 files, verifies card fingerprints.
+2. Authenticated `GET /messages?since=fetch_cursor`.
+3. Decrypt / verify / two-cursor dispatch.
+4. Persist `state.json` and update `last_seq` (0644) so the hook stops waking.
+
+### Accepted caveat (Anton, 2026-09-16)
+
+Keys at rest on the VM disk are readable by **any worker in that runtime**. The boundary is hook-script integrity (secretless, never opens 0600 files), not a process-isolation vault. Bearer tokens could later ride a custom API-credential connector so the worker never sees the value; Ed25519/X25519 private keys need raw bytes, so files are unavoidable for those. v2 keeps tokens in `card.json` with the keys, one 0600 surface.
 
 ### Gauri Muse
 
-Same shape, independently:
+Same layout, independently, on her runtime. Her go-ahead still closed — nothing is installed there. When she authorizes, she generates keys on her side, we do the in-person ceremony, she writes her own `~/.muse-mailbox/`.
 
-| Secret name | Contents |
-|---|---|
-| `muse-mailbox/identity` | her key seeds |
-| `muse-mailbox/card-aman` | her card (her tokens + both public keys) |
+## Token minting (operator — Anton on Hatch)
 
-**Need from Gauri’s Muse (via Aman, after her go-ahead):** confirm a woken worker can read those secrets, and that she will install the 5s presence hook herself.
+Production: `POST /v1/admin/provision` with `ADMIN_SECRET` (wrangler secret, never chat).
+Returns `mailbox_id` + four plaintext tokens **once**. Redirect stdout to a Hatch file
+mode `0600`. A 409 means already provisioned.
 
-There is no shared vault. Copy-pasting a card through WhatsApp/Muse chat is forbidden — in person, or a passphrase-protected file on a USB stick handed over.
+Aman’s two tokens stay on Hatch and are copied into `~/.muse-mailbox/card.json` after
+the fingerprint ceremony (public keys filled in). Gauri’s two tokens go to a second
+0600 file (`held-gauri-tokens.json`) and are **held** — nothing reaches her Muse until
+she authorizes and the in-person ceremony happens.
 
-## Token minting (operator)
+Scratch: `provision_dev()` in `src/muse_mailbox/provision.py` is local-only and must
+not be used for production tokens.
 
-Scratch: `provision_dev()` in `src/muse_mailbox/provision.py`.
+Do **not** deploy until Aman confirms. Cursor never sees production tokens.
 
-Production: a one-shot `mailboxctl init` run by the **neutral Cloudflare account** holder, outputting two card templates with empty `keys` blocks. Each Muse fills in public keys, humans do the fingerprint ceremony, each side writes the completed card into their vault.
-
-Token rotation: operator replaces one directional token atomically in DO storage; the owner’s card is re-issued (in person if signing keys also change; over a trusted channel if only the token changed — prefer in person anyway).
+Token rotation: operator replaces hashes inside the Durable Object (future admin
+endpoint); the owner’s `card.json` is rewritten.
 
 ## Key replacement
 
@@ -84,7 +116,8 @@ Token rotation: operator replaces one directional token atomically in DO storage
 
 ## What must never be exported
 
-- Private keys
+- Private keys (`identity.json`)
 - The peer’s send/fetch tokens
 - Hatch / Pi / Cloudflare homelab credentials
-- The operator’s Cloudflare API token (lives in the operator account, not in either Muse)
+- The operator’s Cloudflare API token
+- Any 0600 path in a hook script

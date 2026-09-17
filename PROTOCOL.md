@@ -1,7 +1,9 @@
 # muse-mailbox/2 — Frozen Protocol Contract
 
-**Status:** FROZEN for implementation (2026-09-15). This document is the single authoritative
-spec. It supersedes the v1 shared-passphrase draft and the investigation's draft language on
+**Status:** FROZEN for implementation (2026-09-15). **Approved errata 2026-09-16**
+(Aman, via Anton) are folded into the normative text below and listed in
+`docs/ERRATA_2026-09-16.md`. This document is the single authoritative spec. It
+supersedes the v1 shared-passphrase draft and the investigation's draft language on
 AAD and cursor semantics. Rationale and rejected alternatives live in
 `INVESTIGATION.md` and `parts/`; where this contract and those drafts disagree, **this
 contract wins**.
@@ -25,7 +27,7 @@ contract wins**.
   No PKI.
 - Accepted residual exposures (conscious, not oversights): relay-visible metadata (timing,
   size buckets, counts, direction, presence-oracle counter movement); no forward secrecy
-  (mitigated by delete-after-fetch, ~7-day TTL, monthly encryption-key rollovers).
+  (mitigated by 30-day TTL, 100k cap, and monthly X25519 rollovers — not delete-after-fetch).
 
 ## 2. Wire format
 
@@ -49,11 +51,13 @@ contract wins**.
 - `message_id`: UUID v4, the **idempotency key** (called `client_message_id` in the
   investigation drafts — same field).
 - `sent_at`: RFC3339 UTC. Relay rejects `|relay_now − sent_at| > 300 s` with `422`.
-- Decoded `ct` ≤ 200 KiB; `eph`/`nonce`/`ct` must be valid base64.
+- Decoded `ct` ≤ 180 KiB; `eph`/`nonce`/`ct` must be valid base64. (180 KiB keeps the
+  base64 JSON body under the 256 KiB cap.)
 
 **Relay behavior (in order):** validate token (must be a send token bound to this mailbox;
 `from` must equal the token's participant; `to` must equal the counterparty) → idempotency
-check on `message_id` (same id + identical payload hash → return original `seq` with
+check on `message_id` (same id + identical payload hash of
+`{v,from,to,message_id,eph,nonce,ct}` — **`sent_at` excluded** → return original `seq` with
 `"duplicate": true`; same id + different payload hash → `409`) → size/freshness checks →
 **atomically** assign the next per-mailbox `seq` (monotonic, never reused; gaps permitted)
 → store `(seq, from, to, message_id, payload_hash, sent_at, stored_at, eph, nonce, ct)` →
@@ -177,10 +181,10 @@ limits bound abuse.
 ## 5. Retention
 Messages are kept **30 days** from `stored_at`, then pruned; mailbox additionally capped at
 **100,000** messages (oldest pruned first). Pruned messages are unrecoverable; pruned
-sequence numbers are never reassigned. Clients must fetch promptly. (The investigation
-drafts also describe delete-after-fetch + ~7-day TTL as the forward-secrecy substitute —
-the relay SHOULD additionally delete a message once the recipient's `fetch_cursor` has
-durably passed it; the 30-day TTL is the backstop.)
+sequence numbers are never reassigned. Clients must fetch promptly. There is **no**
+delete-after-fetch: the API has no durable ack, so a `GET ?since=N` is not a receipt.
+Forward-secrecy mitigation is the 30-day TTL plus monthly X25519 rotation — weaker than
+delete-after-fetch, and stated honestly.
 
 ## 6. Client receive algorithm (two-cursor model — normative)
 
@@ -197,25 +201,31 @@ decrypted, and dispatched; `buffer: map[sender_seq → message]` (bounded: 1000 
 on poll (5-second presence hook saw highest_seq move, or scheduled catch-up):
   loop:
     page = GET /messages?since=fetch_cursor&limit=200
-    if page.messages is empty: break
+    if page.messages is empty:
+      fetch_cursor = page.highest_seq       # directional GET omits the other direction
+      break
     for msg in page.messages (already seq-ascending):
       handle(msg)
     fetch_cursor = page.next_since          # durable write; never moves backward
     if page.next_since == page.highest_seq: break
 ```
+The secretless hook persists `last_seen_highest_seq` independently (a non-secret file).
 `handle(msg)`:
 ```
 1. if msg.message_id in seen_ids: return                      # duplicate delivery
 2. aad = canonical_json({v, mailbox_id, message_id, from, to, eph})   # §3.1
+   # AESGCM_decrypt over X25519 privs in earlier drafts was shorthand for:
+   #   shared = X25519(enc_priv, eph); key = HKDF(...); AES-256-GCM decrypt
    pt = None
    for k in [active_enc_priv, *grace_enc_privs]:
-     try: pt = AESGCM_decrypt(k, msg.nonce, aad, msg.ct); break
+     try: pt = ECIES_decrypt(k, msg.eph, msg.nonce, aad, msg.ct); break
      except InvalidTag: continue
    if pt is None: quarantine(msg); alert("undecryptable blob"); seen_ids.add(id); return
       # fetch_cursor still advances past it (§6.2 loop): one bad blob never stalls the stream
 3. strip length prefix + zero padding → split sig (64 B) ‖ inner_bytes
+   Ed25519_verify(pinned_peer_sign_pub, sig, inner_bytes)  # exact signed bytes
    inner = json.loads(inner_bytes)
-   Ed25519_verify(pinned_peer_sign_pub, sig, canonical(inner_bytes))  # fail → quarantine + alert
+   require canonical_json(inner) == inner_bytes            # then parse; fail → quarantine
 4. require inner.from == msg.from, inner.to == msg.to,
            inner.message_id == msg.message_id                      # cross-check layers
    require inner.to == my_participant_id
@@ -317,9 +327,11 @@ are **mandatory and must be proven by the regression tests in §9**:
    `process_cursor` advanced contiguously `1..M` with no gaps; no `message_id` dispatched
    twice; `fetch_cursor == highest_seq` at the end; duplicate retries returned
    `"duplicate": true` with the original `seq`; conflicting `message_id` reuse → `409`.
-2. **Out-of-order delivery:** deliver sender messages with `sender_seq` 10, 12, 11.
+2. **Out-of-order delivery:** precondition: `process_cursor[peer] == 9` (send 1..9 first,
+   or initialize the cursor). Then deliver sender messages with `sender_seq` 10, 12, 11.
    Assert 11 is buffered then dispatched after 10, `process_cursor` ends at 12, and nothing
-   was skipped or double-dispatched.
+   was skipped or double-dispatched. From cursor 0, 10/12/11 all buffer and never dispatch
+   (gap policy: never auto-skip).
 3. **AAD tamper matrix:** flip each of `v`, `mailbox_id`, `message_id`, `from`, `to`,
    `eph`, and one bit of `ct`, one at a time. Assert every tampered blob fails decrypt
    (`InvalidTag`) — the relay cannot rewrite routing undetected.
@@ -341,12 +353,13 @@ are **mandatory and must be proven by the regression tests in §9**:
    `GAURI_RUNTIME_VERIFICATION_RESULT.md`. Standing boundary preserved: this was proof
    of capability, not consent to deploy — nothing is built on Gauri's side without
    Gauri's explicit go-ahead.
-2. **Relay operator decision** — who provisions the neutral relay (Cloudflare account or
-   tiny VPS). Explicitly not Aman's Pi. No accounts created until Aman approves.
-3. **Private-key custody read path** — where Ed25519/X25519 private keys live such that a
-   worker woken by the hook can use them (Secure Vault read path for workers to be
-   verified at build time).
+2. **Relay operator decision** — ✅ Cloudflare (2026-09-16): new account created with
+   Gauri, both humans hold the login, start on `workers.dev`, VPS is fallback.
+   **Do not create the account until Aman says so.**
+3. **Private-key custody read path** — ✅ file-based (2026-09-16). Hatch Secure Vault has
+   no worker-readable named-secret KV. Keys + card live as mode `0600` files in a
+   dedicated directory the secretless hook never opens. See `docs/PROVISIONING.md`.
 4. Presence-oracle exposure (unauthenticated counter) — accepted; mailbox IDs must be
-   ≥128-bit random.
+   ≥128-bit random. Gauri's acknowledgement still pending her go-ahead.
 5. Final tunables at build time: padding buckets, heartbeat cadence, TTL/retention values,
    rate-limit numbers, gap-policy thresholds.

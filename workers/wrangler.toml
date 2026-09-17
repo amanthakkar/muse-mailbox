@@ -1,0 +1,24 @@
+name = "muse-mailbox"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+account_id = "REDACTED_CLOUDFLARE_ACCOUNT_ID"
+workers_dev = true
+
+# Guest-model relay on Aman's existing Cloudflare account.
+# Anton deploys from Hatch. Cursor does not wrangler-deploy from the Pi.
+
+[[durable_objects.bindings]]
+name = "MAILBOX"
+class_name = "MailboxDO"
+
+[[migrations]]
+tag = "v1"
+# Free-plan account rejected new_classes; Hatch deployed with new_sqlite_classes.
+new_sqlite_classes = ["MailboxDO"]
+
+[[r2_buckets]]
+binding = "BLOBS"
+bucket_name = "muse-mailbox-blobs"
+
+# Set via `wrangler secret put ADMIN_SECRET` (Anton, Hatch). Never commit it.
+# [vars] stays empty on purpose.

@@ -1,8 +1,8 @@
 # Contract review — muse-mailbox/2
 
-**Verdict: implementable as frozen**, with the interpretations below. Nothing here silently redesigns the protocol. Items marked **RAISE** should be confirmed or patched in a v2.1 errata before production.
+**Verdict: implementable as frozen.** The seven RAISE items were **approved by Aman on 2026-09-16** and folded into `PROTOCOL.md` (`docs/ERRATA_2026-09-16.md`).
 
-Scratch harness + full §9 matrix: `tests/test_matrix.py` (11/11 pass). See `docs/RESULTS.md`.
+Scratch harness + full §9 matrix: `tests/test_matrix.py`. See `docs/RESULTS.md`.
 
 ## What is solid
 

@@ -18,7 +18,7 @@ from .store import Store, parse_rfc3339, rfc3339, utcnow
 from .tokens import extract_bearer, token_hash
 
 MAX_BODY = 256 * 1024
-MAX_CT = 200 * 1024
+MAX_CT = 180 * 1024
 SEND_RATE = 60
 FETCH_RATE = 300
 STALE_SECONDS = 300
@@ -161,7 +161,7 @@ class Relay:
         if len(eph) != 32 or len(nonce) != 12:
             raise RelayError(400, "invalid_request", "eph/nonce length")
         if len(ct) > MAX_CT:
-            raise RelayError(413, "payload_too_large", "ct exceeds 200 KiB")
+            raise RelayError(413, "payload_too_large", "ct exceeds 180 KiB")
         message_id = env["message_id"]
         p_hash = payload_hash_bytes(
             v=2,
