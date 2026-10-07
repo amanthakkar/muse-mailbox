@@ -26,6 +26,7 @@ proxy setup as an ordinary shell command, but without secrets or connector crede
 
 Hook `hook-wake-test` installed with `poll_interval_secs: 5`, delivery defaulting to the
 chat. The installed script contained no secrets, tokens, or credentials.
+
 | Time (PDT) | Event |
 |---|---|
 | 12:35:53 | Dry run with no tripwire → silent, reason `no-tripwire` (correct) |
@@ -75,6 +76,7 @@ All four steps pass with minimum interval = 5. The assumption is proven.
 None of these affect the contract — they are operational details of her runtime's hook API.
 
 ## Standing boundary (stated by Gauri's Muse, preserved)
+
 > Verification passing is not authorization to build. The contract's next step — this
 > runtime polling an external, unauthenticated mailbox URL and waking whenever it changes —
 > means anyone able to write to that endpoint could wake Gauri's worker. I will not build

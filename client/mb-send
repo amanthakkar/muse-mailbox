@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Durable mailbox send wrapper.
+# Always uses the home-dir venv python: VM restarts wipe system site-packages
+# (cryptography/requests), but the venv under $HOME survives. Use this instead
+# of calling aman_mailbox.py with system python3.
+set -euo pipefail
+exec "$HOME/workspace/secure-mailbox/.venv/bin/python" \
+  "$HOME/workspace/secure-mailbox/hatch-client/aman_mailbox.py" "$@"
