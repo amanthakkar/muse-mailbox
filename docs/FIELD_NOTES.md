@@ -45,7 +45,24 @@ instead of blowing up. See `client/mailbox_routing.py::coerce_seq_set`.
 The hook worker runtime has no chat-delivery tool, so its fallback summaries
 went to the hook's delivery target (the side chat) instead of main. Fixed
 manually the same day by re-pulling from the mailbox and delivering to main.
-Standing limitation: fallback delivery still targets the side chat.
+
+**Standing limitation (largest single source of "wrong thread" reports).**
+The hook worker runtime cannot hand messages to another chat, so every
+fallback summary lands in the side chat: Sep 24 (birthday-gift reply),
+Sep 29 (relays 149/151 — routing metadata was correct but undeliverable to
+the home chats), Sep 30 (HSA summaries), Oct 4 (seqs 239–258), Oct 5–6
+(seqs 281–294). `resolve_chat()` computes the right chat; the runtime just
+can't deliver there. Until the runtime gains cross-chat delivery, the safety
+net reports the owning chat explicitly and a human (or the main-chat agent)
+forwards.
+
+**Oct 5 — route.json stickiness near-miss.**
+Sticky origin pointed at the side chat (from seq 289, sent there) while the
+rent-instruction thread lived in main; only an explicit correction made seq
+293 use main-chat routing. `route.json` = most-recent-send origin, not
+necessarily the active thread. Mitigation: the sending agent must always pass
+an explicit `--return-to` for the thread being discussed — never rely on
+stickiness for a new topic.
 
 **Oct 6 — the routing paths drifted from each other.**
 Three consumers reimplemented the reply-routing order from prose
@@ -65,6 +82,13 @@ morning: unknown/missing subcommand now prints usage and exits 2. Standing
 rule: a send is verified only when the output contains `{"seq": N}`;
 `{"duplicate": true, "conflict": true}` (409 payload conflict) is NOT a
 verified send.
+
+**Sep 30 / Oct 5 — the literal string "--help" was sent to the peer, twice.**
+`_parse_send_args` treats unrecognized flags as body text, so
+`mb-send send --help` sent "--help" as a message (relay 186, then seq 292;
+the second was immediately corrected by seq 293). Fixed Oct 6: `--help`/`-h`
+anywhere in the args prints usage and exits 2, and any flag-like send body
+is refused.
 
 **Sep 27–28 — phantom sender_seq 51/52 gaps.**
 `send()` claimed `sender_seq` before the POST and never reclaimed it after a
@@ -88,6 +112,15 @@ while retaining `client_message_id`.
 
 **Sep 29 — our ack traffic looked like gaps to Iko (sender_seqs 150/152/153/155).**
 Explained: those were v2.2 read acknowledgments, not missing messages.
+
+**Acks verified clean (Oct 6 audit).** Only two inbound acks ever arrived
+(relay 95/99): logged, never surfaced; `surfaced.json` contains zero acks;
+the safety net excludes them. The 87 daemon auto-acks are logged protocol
+signals.
+
+**Inbound `marker/out` thread-close: implemented, never observed inbound.**
+The spool holds only `message` / `list-ops` / `ack` types — the close path is
+untested in production.
 
 **Sep 16 (go-live) — Cloudflare edge 1010 on default Python User-Agent.**
 The edge returned a plain-text 403 before the Worker. Fixed by setting an

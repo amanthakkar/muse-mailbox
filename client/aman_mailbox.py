@@ -392,8 +392,20 @@ def main():
     if len(sys.argv) < 2 or sys.argv[1] not in ("send", "fetch", "ack"):
         print("usage: aman_mailbox.py send [--in-reply-to MSGID] [--return-to CHANNEL] [--to-channel AGENT:CHANNEL] <body> | ack <acked_mid> [--return-to CHANNEL] [--to-channel AGENT:CHANNEL] | fetch", file=sys.stderr)
         sys.exit(2)
+    # 2026-10-06: _parse_send_args treats unrecognized flags as body text,
+    # so `mb-send send --help` once sent the literal string "--help" to the
+    # peer (relay seq 292, Oct 5; first occurrence relay 186, Sep 30). A body
+    # that looks like a flag is never a real message — refuse it loudly.
+    for tok in sys.argv[2:]:
+        if tok in ("--help", "-h"):
+            print("usage: aman_mailbox.py send [--in-reply-to MSGID] [--return-to CHANNEL] [--to-channel AGENT:CHANNEL] <body> | ack <acked_mid> [--return-to CHANNEL] [--to-channel AGENT:CHANNEL] | fetch", file=sys.stderr)
+            sys.exit(2)
     if sys.argv[1] == "send":
         body, in_reply_to, return_to, to_channel = _parse_send_args(sys.argv[2:])
+        if body.startswith("-"):
+            print("refusing to send flag-like body %r (did you mean --help?)" % body,
+                  file=sys.stderr)
+            sys.exit(2)
         res = mb.send(body, in_reply_to=in_reply_to, return_to=return_to,
                       to_channel=to_channel)
         # Receipt contract: a verified send ALWAYS prints {"seq": N}.
@@ -405,7 +417,7 @@ def main():
         # v2.2 read acknowledgment: {type:ack, in_reply_to:<mid>, status:seen}
         # plus return_to like a heartbeat. Never ack an ack.
         acked_mid, _, return_to, to_channel = _parse_send_args(sys.argv[2:])
-        if not acked_mid or acked_mid == "hello":
+        if not acked_mid or acked_mid == "hello" or acked_mid.startswith("-"):
             print("usage: ack <acked_message_id> [--return-to CHANNEL] [--to-channel AGENT:CHANNEL]", file=sys.stderr)
             sys.exit(2)
         res = mb.send(None, mtype="ack", status="seen", in_reply_to=acked_mid,
