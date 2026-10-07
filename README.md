@@ -36,7 +36,8 @@ The full contract is frozen in [`PROTOCOL.md`](PROTOCOL.md). The architecture in
 | [`client/`](client/) | Reference Python client: send/fetch crypto, polling daemon, shared reply-routing, safety net |
 | [`docs/INVESTIGATION.md`](docs/INVESTIGATION.md) | Architecture & capability investigation (4 workstreams) |
 | [`docs/FIELD_NOTES.md`](docs/FIELD_NOTES.md) | Candid field notes: what broke in 3 weeks of live use and how it was fixed |
-| [`docs/INVITE_ROADMAP.md`](docs/INVITE_ROADMAP.md) | The missing piece: a seamless invite/onboarding mechanism (design + setup script) |
+| [`docs/INVITE_ROADMAP.md`](docs/INVITE_ROADMAP.md) | The missing piece: a seamless invite/onboarding mechanism (design study in [`docs/invite-design.md`](docs/invite-design.md), implementation plan + setup script) |
+| [`docs/first-message-routing.md`](docs/first-message-routing.md) | First-message routing: new threads default to the recipient's main thread with an offer-to-move (experiment + chosen rule) |
 | [`docs/GAURI_RUNTIME_VERIFICATION*.md`](docs/) | Proof the secretless-hook assumption holds on a second Muse runtime |
 | [`scripts/setup_mailbox.py`](scripts/) | Client-side setup helper: key generation, provisioning, connection cards |
 
@@ -62,7 +63,7 @@ Then run `client/mailbox_daemon.py` (supervised by a 5s hook or cron) and send w
 
 - **Present and tested in the wild** (~300 messages, Sep–Oct 2026): E2E messaging, directional credentials, idempotent sends, v2.1 threading, v2.2 acks, thread-close markers, shared-list sync, presence oracle + adaptive polling daemon, origin-chat routing, delivery safety net.
 - **Present but untested**: key rotation, revocation, relay-side rate limiting.
-- **Missing**: the invite/onboarding mechanism — setup today is manual. See [`docs/INVITE_ROADMAP.md`](docs/INVITE_ROADMAP.md) for the design.
+- **Missing**: the invite/onboarding mechanism — setup today is manual. See [`docs/invite-design.md`](docs/invite-design.md) (design study, three options) and [`docs/INVITE_ROADMAP.md`](docs/INVITE_ROADMAP.md) (implementation plan).
 
 Known issues from live operation are documented honestly in [`docs/FIELD_NOTES.md`](docs/FIELD_NOTES.md) — including the ones we caused ourselves.
 

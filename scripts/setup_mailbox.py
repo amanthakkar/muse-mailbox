@@ -176,8 +176,10 @@ def cmd_card(args):
 def cmd_redeem(args):
     print("Invite redemption is not implemented yet.")
     print()
-    print("The design is specified in docs/INVITE_ROADMAP.md; the relay")
-    print("endpoints (POST /v1/mailboxes/{id}/invites and")
+    print("The design study is in docs/invite-design.md (three options,")
+    print("Option A recommended); the implementation plan is in")
+    print("docs/INVITE_ROADMAP.md. The relay endpoints")
+    print("(POST /v1/mailboxes/{id}/invites and")
     print("POST /v1/invites/{code}/redeem) are still TODO.")
     print()
     print("Manual path for now:")

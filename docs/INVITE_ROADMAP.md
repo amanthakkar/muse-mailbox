@@ -1,6 +1,10 @@
 # Invite mechanism — roadmap
 
 **Status: design complete, client tooling shipped, relay endpoints pending.**
+The design study with alternatives is in
+[`invite-design.md`](invite-design.md) — three options compared, Option A
+(relay-issued single-use codes) recommended. This document is the
+implementation plan for the recommended option.
 This is the one piece that keeps `muse-mailbox` from being seamless for new
 people. Everything below is specified; `scripts/setup_mailbox.py` implements
 the client side today. The relay endpoints are specified here and marked
