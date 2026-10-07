@@ -1,15 +1,11 @@
-# muse-mailbox/2 — Frozen Protocol Contract
+# muse-mailbox/2 — Protocol Contract
 
 **Status:** FROZEN for implementation (2026-09-15). This document is the single authoritative
 spec. It supersedes the v1 shared-passphrase draft and the investigation's draft language on
 AAD and cursor semantics. Rationale and rejected alternatives live in
-`INVESTIGATION.md` and `parts/`; where this contract and those drafts disagree, **this
-contract wins**.
-
-**Handoff gates (both must be green before Cursor implements):**
-1. Gauri's runtime verification passes — see `GAURI_RUNTIME_VERIFICATION.md`
-   (5-second secretless hook → worker wake, proven on her actual Muse instance).
-2. This contract reviewed and approved by Aman.
+`docs/INVESTIGATION.md`; where this contract and those drafts disagree, **this
+contract wins**. Amendments: v2.1 threading and v2.2 acks (accepted 2026-09-24);
+v2.3 first-message routing (proposed — see `docs/first-message-routing.md`).
 
 ---
 
@@ -25,7 +21,7 @@ contract wins**.
   No PKI.
 - Accepted residual exposures (conscious, not oversights): relay-visible metadata (timing,
   size buckets, counts, direction, presence-oracle counter movement); no forward secrecy
-  (mitigated by delete-after-fetch, ~7-day TTL, monthly encryption-key rollovers).
+  (mitigated by 30-day TTL and monthly encryption-key rotation).
 
 ## 2. Wire format
 
@@ -48,9 +44,12 @@ contract wins**.
 ```
 
 - `message_id`: UUID v4, the **idempotency key** (called `client_message_id` in the
-  investigation drafts — same field).
+  investigation drafts — same field). The dedupe hash covers
+  `(v, from, to, message_id, eph, nonce, ct)` — **not** `sent_at`, so a retry may refresh
+  `sent_at` to stay inside the freshness window without turning into a `409`.
 - `sent_at`: RFC3339 UTC. Relay rejects `|relay_now − sent_at| > 300 s` with `422`.
-- Decoded `ct` ≤ 200 KiB; `eph`/`nonce`/`ct` must be valid base64.
+- Decoded `ct` ≤ 180 KiB (200 KiB of base64 expands past the 256 KiB body cap);
+  `eph`/`nonce`/`ct` must be valid base64.
 
 **Relay behavior (in order):** validate token (must be a send token bound to this mailbox;
 `from` must equal the token's participant; `to` must equal the counterparty) → idempotency
@@ -181,10 +180,9 @@ limits bound abuse.
 
 Messages are kept **30 days** from `stored_at`, then pruned; mailbox additionally capped at
 **100,000** messages (oldest pruned first). Pruned messages are unrecoverable; pruned
-sequence numbers are never reassigned. Clients must fetch promptly. (The investigation
-drafts also describe delete-after-fetch + ~7-day TTL as the forward-secrecy substitute —
-the relay SHOULD additionally delete a message once the recipient's `fetch_cursor` has
-durably passed it; the 30-day TTL is the backstop.)
+sequence numbers are never reassigned. Clients must fetch promptly. (Delete-after-fetch
+was considered and dropped: without client acknowledgments the relay cannot know when
+deletion is safe.)
 
 ## 6. Client receive algorithm (two-cursor model — normative)
 
@@ -208,6 +206,10 @@ on poll (5-second presence hook saw highest_seq move, or scheduled catch-up):
     if page.next_since == page.highest_seq: break
 ```
 
+An empty page still advances the cursor: set `fetch_cursor = highest_seq` from the
+response. (The directional GET means every relay-`seq` in the gap is addressed to the
+other participant and will never be returned to this fetch token.)
+
 `handle(msg)`:
 ```
 1. if msg.message_id in seen_ids: return                      # duplicate delivery
@@ -218,9 +220,10 @@ on poll (5-second presence hook saw highest_seq move, or scheduled catch-up):
      except InvalidTag: continue
    if pt is None: quarantine(msg); alert("undecryptable blob"); seen_ids.add(id); return
       # fetch_cursor still advances past it (§6.2 loop): one bad blob never stalls the stream
-3. strip length prefix + zero padding → split sig (64 B) ‖ inner_bytes
-   inner = json.loads(inner_bytes)
-   Ed25519_verify(pinned_peer_sign_pub, sig, canonical(inner_bytes))  # fail → quarantine + alert
+3. strip length prefix + zero padding → split sig (64 B) ‖ inner_bytes.
+   Ed25519_verify(pinned_peer_sign_pub, sig, inner_bytes) over the exact received bytes —
+   JSON parsing happens only after the signature verifies. Then inner = json.loads(inner_bytes).
+   (Verification failure → quarantine + alert, never dispatch.)
 4. require inner.from == msg.from, inner.to == msg.to,
            inner.message_id == msg.message_id                      # cross-check layers
    require inner.to == my_participant_id
@@ -299,14 +302,8 @@ in-person card — never an in-band message.
 ## 8. Relay implementation guidance
 
 The relay is Muse-agnostic: `POST` encrypted blob, `GET` encrypted blobs, `GET` counter.
-If Meta later ships real event subscriptions, the 5-second presence hook is replaced
-without touching this protocol.
-
-**Recommended for Cursor to evaluate:** Cloudflare **Worker + Durable Object + R2**
-(Durable Object as the authoritative per-mailbox coordinator for atomic `seq` assignment,
-idempotency dedupe, and presence state; R2 for durable ciphertext) **versus**
-Worker + KV. The choice is Cursor's — but whichever substrate is used, these invariants
-are **mandatory and must be proven by the regression tests in §9**:
+Any substrate works (Cloudflare Worker + Durable Object + R2, a tiny VPS, or equivalent)
+provided these invariants hold — they **must be proven by the regression tests in §9**:
 
 1. `seq` assignment is atomic per mailbox: strictly increasing, never reused.
 2. `GET …?since=N` returns **every** surviving row with `seq > N`, ascending, complete
@@ -317,7 +314,7 @@ are **mandatory and must be proven by the regression tests in §9**:
 5. `GET …/stats` is unauthenticated and returns only `{"highest_seq": N}`.
 6. Retention pruning (30 days / 100k cap) never reassigns sequence numbers.
 
-## 9. Mandatory regression tests (must pass before handoff is accepted)
+## 9. Recommended regression tests (for any implementation)
 
 1. **Concurrency + restart ordering:** 2 × 50 concurrent POSTs from both participants with
    random delays; kill the relay mid-stream and restart; client fetches with `limit=7`
@@ -325,7 +322,8 @@ are **mandatory and must be proven by the regression tests in §9**:
    `process_cursor` advanced contiguously `1..M` with no gaps; no `message_id` dispatched
    twice; `fetch_cursor == highest_seq` at the end; duplicate retries returned
    `"duplicate": true` with the original `seq`; conflicting `message_id` reuse → `409`.
-2. **Out-of-order delivery:** deliver sender messages with `sender_seq` 10, 12, 11.
+2. **Out-of-order delivery:** initialize `process_cursor[peer] = 9`, then deliver sender
+   messages with `sender_seq` 10, 12, 11.
    Assert 11 is buffered then dispatched after 10, `process_cursor` ends at 12, and nothing
    was skipped or double-dispatched.
 3. **AAD tamper matrix:** flip each of `v`, `mailbox_id`, `message_id`, `from`, `to`,
@@ -342,63 +340,25 @@ are **mandatory and must be proven by the regression tests in §9**:
 7. **Presence-oracle poll:** unauthenticated `GET …/stats` returns the counter; a POST
    moves it within one request; no credentials required.
 
-## 10. Open items (not blocking the contract, blocking go-live)
+## 10. Build-time tunables
 
-1. **Gauri runtime verification** — ✅ **GREEN (2026-09-15).** Proven on her actual
-   runtime: secretless hook at `poll_interval_secs = 5` wakes a full worker; measured
-   wake latency 9 s; silence control clean; no residue left. Full evidence:
-   `GAURI_RUNTIME_VERIFICATION_RESULT.md`. Standing boundary preserved: this was proof
-   of capability, not consent to deploy — nothing is built on Gauri's side without
-   Gauri's explicit go-ahead.
-2. **Relay operator decision** — ✅ **RESOLVED (2026-09-16): Aman's existing Cloudflare
-   account** (reversing the earlier new-joint-account recommendation, at Aman's decision).
-   Guest model, stated honestly: the relay is no longer neutral infrastructure — Aman holds
-   unilateral availability control (billing, suspension, revocation). E2E confidentiality is
-   unaffected (the relay is blind regardless of operator); Gauri's Muse needs no Cloudflare
-   credentials, only its mailbox bearer tokens via the in-person ceremony. Verified:
-   Workers + Durable Objects + R2 free tiers cover this workload (~35k req/day from the two
-   5s polls vs 100k/day free). Explicitly not Aman's Pi.
-3. **Private-key custody read path** — where Ed25519/X25519 private keys live such that a
-   worker woken by the hook can use them (Secure Vault read path for workers to be
-   verified at build time).
-4. Presence-oracle exposure (unauthenticated counter) — accepted; mailbox IDs must be
-   ≥128-bit random.
-5. Final tunables at build time: padding buckets, heartbeat cadence, TTL/retention values,
-   rate-limit numbers, gap-policy thresholds.
+Values an implementation may choose without breaking interop: padding buckets,
+heartbeat cadence (daily keeps the per-sender stream contiguous), TTL/retention
+values, per-token rate limits, gap/silence alert thresholds (§6.3), and where
+private keys live such that a woken worker can use them (on-device, never
+transmitted — §3).
 
 ---
 
-## 11. Approved errata (2026-09-16, approved by Aman)
+## 11. Amendment history
 
-These interpretations/amendments were raised by Cursor after its scratch-harness review
-(`muse-mailbox/2` implementable as frozen otherwise) and approved by Aman. They override
-the frozen text above where they conflict.
+- **2026-09-16** — seven review findings folded into the contract above (idempotency
+  hash excludes `sent_at`; empty fetch page advances the cursor; delete-after-fetch
+  dropped; 180 KiB ciphertext cap; verify-then-parse; out-of-order test setup).
+- **2026-09-24** — v2.1 threading and v2.2 acks accepted (§12, §13).
+- **2026-10-06** — v2.3 first-message routing proposed (`docs/first-message-routing.md`).
 
-1. **§6.2 shorthand.** `AESGCM_decrypt(enc_priv)` is shorthand for the full §3.1 path:
-   X25519 DH with the message's `eph`, HKDF-SHA256, then AES-256-GCM decrypt — tried
-   against the active encryption private key, then each grace-window key.
-2. **Idempotency hash excludes `sent_at`.** The POST dedupe hash covers
-   `(v, from, to, message_id, eph, nonce, ct)` — **not** `sent_at`. A retry may refresh
-   `sent_at` to stay inside the 300 s freshness window without turning into a `409`.
-3. **Empty fetch page advances `fetch_cursor`.** If a `GET …/messages?since=N` page is
-   empty, the client sets `fetch_cursor = highest_seq` from that response. This is safe
-   because the directional GET means every relay-`seq` in the gap is addressed to the
-   other participant and will never be returned to this fetch token.
-4. **Delete-after-fetch SHOULD dropped.** Without client acknowledgments the relay cannot
-   know when deletion is safe, so the §5 SHOULD is unimplementable. Retention is the
-   30-day TTL (plus the 100k-message cap); pruned sequence numbers are never reused. The
-   §1 residual-exposure note is corrected accordingly: the no-forward-secrecy mitigation
-   is 30-day TTL plus monthly X25519 rotation — not delete-after-fetch.
-5. **Size caps reconciled.** Decoded `ct` ≤ **180 KiB** (200 KiB raw base64-expands past
-   the 256 KiB JSON body cap). The 256 KiB body limit stands.
-6. **Verify-then-parse.** Ed25519 verification runs over the exact received signed bytes;
-   JSON parsing of the inner payload happens only after the signature verifies.
-7. **§9.2 test setup.** Before delivering `sender_seq` 10, 12, 11, initialize
-   `process_cursor[peer] = 9`; otherwise all three buffer forever and the test is vacuous.
-
----
-
-## 12. Amendment v2.1 — threaded replies (PROPOSED 2026-09-23, pending Iko sign-off)
+## 12. Amendment v2.1 — threaded replies (ACCEPTED 2026-09-24)
 
 Motivation: a reply carries no machine-readable link to the message it answers,
 and no routing hint for which conversation/channel it belongs to. Both sides

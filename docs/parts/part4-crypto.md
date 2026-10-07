@@ -328,7 +328,9 @@ mailbox for no matched threat. Rejected as overengineering — see §4.
 
 ## 6. Residual risks of C (what the recommendation does NOT fix)
 
-1. **No forward secrecy** — deliberate (§4). Mitigated by delete-after-fetch, TTL, rotation.
+1. **No forward secrecy** — deliberate (§4). Mitigated by 30-day TTL and monthly rotation.
+   (The investigation draft also named delete-after-fetch; that was later dropped as
+   unimplementable — see `PROTOCOL.md` §5.)
 2. **Endpoint compromise is total for that endpoint** — key theft ⇒ forge-as-me + read-my-inbound.
    Contained to the compromised party (§3.1); still, private-key custody is critical.
 3. **Provisioning ceremony failure** — skipped fingerprint check ⇒ undetectable MITM from day one.

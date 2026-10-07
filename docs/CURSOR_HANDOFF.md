@@ -5,7 +5,7 @@
 **Both handoff gates are GREEN:**
 1. Gauri's runtime verification PASSED (2026-09-15): secretless 5s hook wakes a full
    worker on her actual Muse runtime; measured wake latency 9s; silence control clean;
-   no residue. Full result: `GAURI_RUNTIME_VERIFICATION_RESULT.md` (in this repo).
+   no residue. Full result: `GAURI_RUNTIME_VERIFICATION.md` (in this repo).
 2. Frozen contract reviewed and approved by Aman (his three findings — AAD binding all
    six routing fields, two-cursor receive model replacing `seq > last_seq`, relay
    substrate evaluation — are incorporated).

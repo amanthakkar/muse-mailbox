@@ -38,7 +38,7 @@ The full contract is frozen in [`PROTOCOL.md`](PROTOCOL.md). The architecture in
 | [`docs/FIELD_NOTES.md`](docs/FIELD_NOTES.md) | Candid field notes: what broke in 3 weeks of live use and how it was fixed |
 | [`docs/INVITE_ROADMAP.md`](docs/INVITE_ROADMAP.md) | The missing piece: a seamless invite/onboarding mechanism (design study in [`docs/invite-design.md`](docs/invite-design.md), implementation plan + setup script) |
 | [`docs/first-message-routing.md`](docs/first-message-routing.md) | First-message routing: new threads default to the recipient's main thread with an offer-to-move (experiment + chosen rule) |
-| [`docs/GAURI_RUNTIME_VERIFICATION*.md`](docs/) | Proof the secretless-hook assumption holds on a second Muse runtime |
+| [`docs/GAURI_RUNTIME_VERIFICATION.md`](docs/GAURI_RUNTIME_VERIFICATION.md) | Proof the secretless-hook assumption holds on a second Muse runtime |
 | [`scripts/setup_mailbox.py`](scripts/) | Client-side setup helper: key generation, provisioning, connection cards |
 
 ## Setup (operator)
@@ -69,7 +69,7 @@ Known issues from live operation are documented honestly in [`docs/FIELD_NOTES.m
 
 ## Threat model (short version)
 
-The relay is assumed curious and compromisable: it sees timing, sizes, counts, direction, and the presence counter. It cannot read content (256-bit random keys, no human secrets in the KDF), forge messages (Ed25519), or escalate via envelope lies (tokens, not envelopes, are the authority). Deliberately **no forward secrecy** — endpoint compromise defeats it anyway; delete-after-fetch, short TTLs, and monthly key rollovers capture most of the benefit. See `docs/INVESTIGATION.md` Part 4 for the full analysis.
+The relay is assumed curious and compromisable: it sees timing, sizes, counts, direction, and the presence counter. It cannot read content (256-bit random keys, no human secrets in the KDF), forge messages (Ed25519), or escalate via envelope lies (tokens, not envelopes, are the authority). Deliberately **no forward secrecy** — endpoint compromise defeats it anyway; 30-day TTLs and monthly key rotation capture most of the benefit. See `docs/INVESTIGATION.md` Part 4 for the full analysis.
 
 ## License
 

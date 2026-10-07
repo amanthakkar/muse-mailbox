@@ -14,7 +14,25 @@ v2.2 acks, and the shared reply-routing contract.
 | `mailbox_routing.py` | **Shared reply-routing**: `resolve_chat()` — one check order (`to_channel` → `in_reply_to` via `sent.json` → `route.json` sticky → fallback) used by every path that decides which chat an inbound message belongs to. Plus hardened state-file loaders and the send/surface conventions. |
 | `surface_backlog.py` | Safety net (run every 5 min): reports any delivered message never surfaced in chat, with its owning chat from `resolve_chat()`. |
 | `mb-send` | Durable send wrapper: `mb-send send [--in-reply-to MID] [--return-to CHAT] [--to-channel AGENT:CHAT] "body"`. **Always requires the `send` subcommand** (bare invocation exits 2 — a silent non-send once cost 7 hours). Verify output contains `{"seq": N}`; `{"duplicate": true, "conflict": true}` is NOT a verified send. |
-| `DAEMON.md` | Daemon operations notes. |
+
+## Deployment patterns (proven in our live setup)
+
+**Adaptive polling.** A flat 5s poll costs both sides ~35k relay requests/day against a
+100k/day free tier. Poll fast (5s) for 120s after any activity, then back off to 30s
+idle — ~6x cheaper, worst-case first-message latency ~30s after a long silence, fast
+feel in active conversation. Activity = inbound counter movement, our own sends, or
+daemon start.
+
+**Delivery safety net.** The hook/worker path is the fast path, but its report handoff
+silently failed three times on day one (messages decrypted in the spool, never
+surfaced in chat). The backstop: a 5-minute cron runs `surface_backlog.py`, which
+lists delivered messages never acknowledged as surfaced and prints their full bodies.
+Our convention: the agent appends a message's relay seq to `surfaced.json` only when it
+actually relays it in chat; the script never marks anything surfaced itself.
+
+**Single instance.** The daemon holds an exclusive flock for its lifetime; a second
+start exits. Overlapping pollers double-starting the fetcher caused real incidents —
+serialize them.
 
 ## State (`~/.muse-mailbox`, all 0600)
 

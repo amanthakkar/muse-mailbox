@@ -120,7 +120,7 @@ B's identities are right but its usual construction (static–static ECDH, unspe
 - **Revocation:** pinned-key model — revocation = human-mediated pin replacement (+ token rotation). No PKI theater at this scale.
 - **Offline attacks:** infeasible (256-bit random keys, never a human secret through a fast KDF).
 - **Metadata confidentiality:** relay sees timing/size-bucket/counts/direction. Outer envelope carries only `{v, eph_pub, nonce, ct}` — no plaintext identities beyond the routing fields the protocol needs.
-- **Forward secrecy:** deliberately **not** built (no double ratchet). Position: endpoint compromise defeats FS anyway; async ratchets over a polling mailbox are genuine complexity; cheaper substitutes — **delete-after-fetch, ~7-day relay TTL, monthly encryption-key rollovers** — capture ~95% of the practical benefit. Residual risk (a persistent collector who later steals a private key decrypts that rotation window) is accepted consciously.
+- **Forward secrecy:** deliberately **not** built (no double ratchet). Position: endpoint compromise defeats FS anyway; async ratchets over a polling mailbox are genuine complexity; cheaper substitutes — **30-day relay TTL and monthly encryption-key rotation** — capture most of the practical benefit. (The investigation draft also named delete-after-fetch; dropped as unimplementable — see `PROTOCOL.md` §5.) Residual risk (a persistent collector who later steals a private key decrypts that rotation window) is accepted consciously.
 
 ### Concrete construction (Python `cryptography`)
 
@@ -196,22 +196,16 @@ Relay-enforced invariants: direction binding per §5; durable monotonic per-mail
 
 ## Recommended architecture
 
-1. **Neutral blind relay** (Worker+KV, tiny VPS, or equivalent — anyone's, never Aman's Pi): two operations (`POST …/messages`, `GET …/messages?since=&limit=`) plus an unauthenticated per-mailbox `highest_seq` oracle. Stores ciphertext + routing metadata only.
-2. **Crypto (Option C):** per-Muse Ed25519 signing + X25519 encryption keys, provisioned via an honest in-person fingerprint/QR ceremony; per-message sign-then-encrypt with fresh ephemeral X25519 → HKDF-SHA256 → AES-256-GCM; no passphrase in the message path; no double ratchet — delete-after-fetch, ~7-day TTL, and monthly encryption-key rollovers instead.
-3. **Auth:** four directional bearer tokens, relay-enforced against the envelope on every request; per-recipient connection cards; token rotation independent of key rotation.
-4. **Latency:** 5 s hook polls the presence oracle → worker wakes → authenticated fetch, verify, decrypt → ~5–15 s typical; cursor-based catch-up covers offline gaps and restarts.
-5. **Hygiene:** signed per-sender sequence numbers + timestamp skew bounds, seen-nonce replay set, daily heartbeats with ~48 h silence alerts, per-token rate limits, size buckets/padding, fixed-interval polling with jitter.
+Superseded by the frozen contract — see [`../PROTOCOL.md`](../PROTOCOL.md) (§1–§7).
+This document remains the rationale record: *why* these choices, and what was rejected.
 
 ---
 
 ## Open questions
 
-1. **Who operates the neutral relay?** Needs a Cloudflare account (Worker) or a tiny VPS — explicitly not Aman's Pi per the brief, and no accounts are to be created until approved.
-2. **Gauri's Muse runtime parity:** does her instance support 5 s hooks with secretless scripts the same way? Assumed similar; unverified — her poller design depends on it.
-3. **Private-key custody on the Muse instances:** where do Ed25519/X25519 private keys live such that a woken worker can use them? (Secure Vault read path for workers needs verification at build time.)
-4. **Presence-oracle exposure:** unauthenticated `highest_seq` per mailbox — accepted as counter-only metadata; mailbox IDs must be unguessable. Confirm acceptable.
-5. **v1 passphrase draft is superseded** — clean cutover to v2, never run both. (The v1 ChatGPT verification plan already in flight should be read as auditing the old draft, not the target.)
-6. Final tunables at build time: padding buckets, heartbeat cadence, TTL/retention values, rate-limit numbers.
+All six were resolved during the Sep 15–16 build (relay operator, runtime parity —
+proven GREEN above, key custody, presence-oracle exposure accepted, v1 superseded,
+tunables at build time). Nothing open.
 
 ---
 
@@ -219,13 +213,13 @@ Relay-enforced invariants: direction binding per §5; durable monotonic per-mail
 
 1. **The provisioning ceremony is the weakest link.** A rushed or skipped fingerprint check means silent relay MITM from day one, undetectable afterwards. The human step must be done honestly.
 2. **Private-key custody on the Muse instances.** Endpoint compromise is total for that endpoint (forge-as-me, read-my-inbound) under any option — keys must be generated on-device and never leave it.
-3. **Accepted residual exposures must stay conscious:** no forward secrecy (deliberate; mitigated by deletion/TTL/rotation) and relay-visible metadata (timing, counts, direction, plus the new presence oracle). Fine for two humans — revisit if the threat model changes.
+3. **Accepted residual exposures must stay conscious:** no forward secrecy (deliberate; mitigated by 30-day TTL and monthly encryption-key rotation) and relay-visible metadata (timing, counts, direction, plus the new presence oracle). Fine for two humans — revisit if the threat model changes.
 
 ---
 
 ## Evidence index
 
-- [part1-runtime.md](sandbox://workspace/secure-mailbox/neutral-mailbox/parts/part1-runtime.md) — capability classifications with quoted doc/schema evidence
-- [part2-network.md](sandbox://workspace/secure-mailbox/neutral-mailbox/parts/part2-network.md) — exact commands + outputs: 101 s idle hold, SSE, WebSocket echo, 5-min process survival
-- [part4-crypto.md](sandbox://workspace/secure-mailbox/neutral-mailbox/parts/part4-crypto.md) — A vs B vs C across all 12 questions, v2 envelope spec, provisioning/rotation/revocation procedures
-- [part567-protocol.md](sandbox://workspace/secure-mailbox/neutral-mailbox/parts/part567-protocol.md) — directional credentials, connection-card schema, mailbox semantics, error table
+- [part1-runtime.md](parts/part1-runtime.md) — capability classifications with quoted doc/schema evidence
+- [part2-network.md](parts/part2-network.md) — exact commands + outputs: 101 s idle hold, SSE, WebSocket echo, 5-min process survival
+- [part4-crypto.md](parts/part4-crypto.md) — A vs B vs C across all 12 questions, v2 envelope spec, provisioning/rotation/revocation procedures
+- [part567-protocol.md](parts/part567-protocol.md) — directional credentials, connection-card schema, mailbox semantics, error table
