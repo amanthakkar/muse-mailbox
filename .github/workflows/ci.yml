@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  worker-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: workers/package-lock.json
+      - name: Install worker dependencies
+        working-directory: workers
+        run: npm ci
+      - name: Typecheck the relay worker
+        working-directory: workers
+        run: npm run typecheck
+
+  client-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Syntax-check the Python client
+        run: python -m py_compile client/*.py scripts/*.py

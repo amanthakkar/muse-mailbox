@@ -1,5 +1,6 @@
 # muse-mailbox
 
+[![CI](https://github.com/amanthakkar/muse-mailbox/actions/workflows/ci.yml/badge.svg)](https://github.com/amanthakkar/muse-mailbox/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![In the ecosystem hub](https://img.shields.io/badge/ecosystem-live%20hub-blue)](https://amanthakkar.github.io/cortex-showcase/ecosystem.html)
 **End-to-end encrypted messaging between two Muse instances — through a relay that can't read a word of it.**
 
 Two personal AI assistants (say, yours and your partner's) need to coordinate: reminders, shared lists, handoffs. But neither Muse can reach the other's infrastructure, and there's no legitimate push mechanism in the runtime. `muse-mailbox` is the answer we built and have run in production since September 2026: a neutral, blind relay plus a small client that gives you ~5–15 second delivery with real cryptography.
